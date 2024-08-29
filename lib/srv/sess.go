@@ -278,19 +278,17 @@ func (s *SessionRegistry) TryCreateHostUser(identityContext IdentityContext) (cr
 		return false, nil, nil // not an error to not be able to create host users
 	}
 
-	ui, err := identityContext.AccessChecker.HostUsers(s.Srv.GetInfo())
-	if err != nil {
-		if trace.IsAccessDenied(err) {
-			log.Warnf("Unable to create host users: %v", err)
-			return false, nil, nil
-		}
-		log.Debug("Error while checking host users creation permission: ", err)
-		return false, nil, trace.Wrap(err)
-	}
-
+	ui, accessErr := identityContext.AccessChecker.HostUsers(s.Srv.GetInfo())
 	existsErr := s.users.UserExists(identityContext.Login)
-	if trace.IsAccessDenied(err) && existsErr != nil {
-		return false, nil, trace.WrapWithMessage(err, "Insufficient permission for host user creation")
+	if existsErr != nil {
+		if trace.IsAccessDenied(accessErr) {
+			return false, nil, trace.WrapWithMessage(accessErr, "Insufficent permission for host user creation")
+		}
+
+		if accessErr != nil {
+			log.Debug("Error while checking host users creation permission: ", err)
+			return false, nil, trace.Wrap(err)
+		}
 	}
 
 	userCloser, err := s.users.UpsertUser(identityContext.Login, *ui)
