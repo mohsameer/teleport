@@ -198,7 +198,7 @@ func requireUserInGroups(t *testing.T, u *user.User, requiredGroups []string) {
 
 func cleanupUsersAndGroups(users []string, groups []string) func() {
 	return func() {
-		for _, group := range groups {
+		for _, group := range append(groups, users...) {
 			cmd := exec.Command("groupdel", group)
 			err := cmd.Run()
 			if err != nil {
@@ -305,8 +305,8 @@ func TestRootHostUsers(t *testing.T) {
 
 		t.Cleanup(func() {
 			os.Remove(sudoersPath(testuser, uuid))
-			host.UserDel(testuser)
 		})
+		t.Cleanup(cleanupUsersAndGroups([]string{testuser}, nil))
 		closer, err := users.UpsertUser(testuser,
 			services.HostUsersInfo{
 				Mode: types.CreateHostUserMode_HOST_USER_MODE_INSECURE_DROP,
