@@ -72,7 +72,15 @@ func newHostSudoersBackend(uuid string) (HostSudoersBackend, error) {
 
 // Lookup implements host user information lookup
 func (*HostUsersProvisioningBackend) Lookup(username string) (*user.User, error) {
-	return user.Lookup(username)
+	user, err := user.Lookup(username)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such file or directory") {
+			return nil, trace.Errorf("ENOENT while looking up user %q, the host's /etc/nsswitch.conf may be misconfigured", username)
+		}
+		return nil, trace.Wrap(err)
+	}
+
+	return user, nil
 }
 
 // UserGIDs returns the list of group IDs for a user
