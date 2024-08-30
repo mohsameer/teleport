@@ -22,7 +22,6 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -61,7 +60,6 @@ type DeployServiceIAMConfigureRequest struct {
 	TaskRole string
 
 	// AccountID is the AWS Account ID.
-	// Optional. sts.GetCallerIdentity is used if not provided.
 	AccountID string
 
 	// ResourceCreationTags is used to add tags when creating resources in AWS.
@@ -91,6 +89,10 @@ func (r *DeployServiceIAMConfigureRequest) CheckAndSetDefaults() error {
 		return trace.BadParameter("region is required")
 	}
 
+	if r.AccountID == "" {
+		return trace.BadParameter("account id is required")
+	}
+
 	if r.IntegrationRole == "" {
 		return trace.BadParameter("integration role is required")
 	}
@@ -114,8 +116,7 @@ func (r *DeployServiceIAMConfigureRequest) CheckAndSetDefaults() error {
 
 // DeployServiceIAMConfigureClient describes the required methods to create the IAM Roles/Policies required for the DeployService action.
 type DeployServiceIAMConfigureClient interface {
-	// GetCallerIdentity returns information about the caller identity.
-	GetCallerIdentity(ctx context.Context, params *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
+	callerIdentityGetter
 
 	// CreateRole creates a new IAM Role.
 	CreateRole(ctx context.Context, params *iam.CreateRoleInput, optFns ...func(*iam.Options)) (*iam.CreateRoleOutput, error)
@@ -126,7 +127,7 @@ type DeployServiceIAMConfigureClient interface {
 
 type defaultDeployServiceIAMConfigureClient struct {
 	*iam.Client
-	stsClient *sts.Client
+	callerIdentityGetter
 }
 
 // NewDeployServiceIAMConfigureClient creates a new DeployServiceIAMConfigureClient.
@@ -141,14 +142,9 @@ func NewDeployServiceIAMConfigureClient(ctx context.Context, region string) (Dep
 	}
 
 	return &defaultDeployServiceIAMConfigureClient{
-		Client:    iam.NewFromConfig(cfg),
-		stsClient: sts.NewFromConfig(cfg),
+		Client:               iam.NewFromConfig(cfg),
+		callerIdentityGetter: sts.NewFromConfig(cfg),
 	}, nil
-}
-
-// GetCallerIdentity returns details about the IAM user or role whose credentials are used to call the operation.
-func (d defaultDeployServiceIAMConfigureClient) GetCallerIdentity(ctx context.Context, params *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
-	return d.stsClient.GetCallerIdentity(ctx, params, optFns...)
 }
 
 // ConfigureDeployServiceIAM set ups the roles required for calling the DeployService action.
@@ -170,12 +166,8 @@ func ConfigureDeployServiceIAM(ctx context.Context, clt DeployServiceIAMConfigur
 		return trace.Wrap(err)
 	}
 
-	if req.AccountID == "" {
-		callerIdentity, err := clt.GetCallerIdentity(ctx, nil)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		req.AccountID = aws.ToString(callerIdentity.Account)
+	if err := checkAccountID(ctx, clt, req.AccountID); err != nil {
+		return trace.Wrap(err)
 	}
 
 	if err := createTaskRole(ctx, clt, req); err != nil {

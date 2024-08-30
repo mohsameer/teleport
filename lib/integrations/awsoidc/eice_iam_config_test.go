@@ -34,6 +34,7 @@ func TestEICEIAMConfigReqDefaults(t *testing.T) {
 		return EICEIAMConfigureRequest{
 			Region:          "us-east-1",
 			IntegrationRole: "integrationrole",
+			AccountID:       "123456789012",
 		}
 	}
 
@@ -48,6 +49,7 @@ func TestEICEIAMConfigReqDefaults(t *testing.T) {
 			req:      baseReq,
 			errCheck: require.NoError,
 			expected: EICEIAMConfigureRequest{
+				AccountID:                 "123456789012",
 				Region:                    "us-east-1",
 				IntegrationRole:           "integrationrole",
 				IntegrationRoleEICEPolicy: "EC2InstanceConnectEndpoint",
@@ -67,6 +69,15 @@ func TestEICEIAMConfigReqDefaults(t *testing.T) {
 			req: func() EICEIAMConfigureRequest {
 				req := baseReq()
 				req.IntegrationRole = ""
+				return req
+			},
+			errCheck: badParameterCheck,
+		},
+		{
+			name: "missing account id",
+			req: func() EICEIAMConfigureRequest {
+				req := baseReq()
+				req.AccountID = ""
 				return req
 			},
 			errCheck: badParameterCheck,
@@ -91,11 +102,13 @@ func TestEICEIAMConfig(t *testing.T) {
 		return EICEIAMConfigureRequest{
 			Region:          "us-east-1",
 			IntegrationRole: "integrationrole",
+			AccountID:       "123456789012",
 		}
 	}
 
 	for _, tt := range []struct {
 		name              string
+		mockAccountID     string
 		mockExistingRoles []string
 		req               func() EICEIAMConfigureRequest
 		errCheck          require.ErrorAssertionFunc
@@ -103,19 +116,29 @@ func TestEICEIAMConfig(t *testing.T) {
 		{
 			name:              "valid",
 			req:               baseReq,
+			mockAccountID:     "123456789012",
 			mockExistingRoles: []string{"integrationrole"},
 			errCheck:          require.NoError,
 		},
 		{
 			name:              "integration role does not exist",
+			mockAccountID:     "123456789012",
 			mockExistingRoles: []string{},
 			req:               baseReq,
 			errCheck:          notFoundCheck,
 		},
+		{
+			name:              "account does not match expected account",
+			req:               baseReq,
+			mockAccountID:     "222222222222",
+			mockExistingRoles: []string{"integrationrole"},
+			errCheck:          badParameterCheck,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			clt := mockEICEIAMConfigClient{
-				existingRoles: tt.mockExistingRoles,
+				callerIdentityGetter: mockSTSClient{accountID: tt.mockAccountID},
+				existingRoles:        tt.mockExistingRoles,
 			}
 
 			err := ConfigureEICEIAM(ctx, &clt, tt.req())
@@ -125,6 +148,7 @@ func TestEICEIAMConfig(t *testing.T) {
 }
 
 type mockEICEIAMConfigClient struct {
+	callerIdentityGetter
 	existingRoles []string
 }
 

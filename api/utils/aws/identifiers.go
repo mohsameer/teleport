@@ -114,42 +114,95 @@ func IsValidGlueResourceName(name string) error {
 }
 
 const (
-	arnDelimiter    = ":"
-	arnPrefix       = "arn:"
-	arnSections     = 6
-	sectionService  = 2 // arn:<partition>:<service>:...
-	sectionAccount  = 4 // arn:<partition>:<service>:<region>:<accountid>:...
-	sectionResource = 5 // arn:<partition>:<service>:<region>:<accountid>:<resource>
-	iamServiceName  = "iam"
+	arnDelimiter = ":"
+	arnPrefix    = "arn:"
+	arnSections  = 6
+
+	// ARNs look like arn:<partition>:<service>:<region>:<accountid>:<resource>
+	sectionPartition = 1
+	sectionService   = 2
+	sectionRegion    = 3
+	sectionAccount   = 4
+	sectionResource  = 5
+
+	iamServiceName = "iam"
 )
 
 // CheckRoleARN returns whether a string is a valid IAM Role ARN.
 // Example role ARN: arn:aws:iam::123456789012:role/some-role-name
 func CheckRoleARN(arn string) error {
+	_, err := ParseRoleARN(arn)
+	return trace.Wrap(err)
+}
+
+// ParseRoleARN parses an IAM role ARN string.
+func ParseRoleARN(arn string) (*ARN, error) {
+	parsed, err := parseARN(arn)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resourceParts := strings.SplitN(parsed.Resource, "/", 2)
+	if resourceParts[0] != "role" || parsed.Service != iamServiceName {
+		return nil, trace.BadParameter("%q is not an AWS IAM role ARN", arn)
+	}
+
+	if len(resourceParts) < 2 || resourceParts[1] == "" {
+		return nil, trace.BadParameter("%q is missing AWS IAM role name", arn)
+	}
+
+	if err := IsValidAccountID(parsed.AccountID); err != nil {
+		return nil, trace.BadParameter("%q invalid account ID: %v", arn, err)
+	}
+
+	return parsed, nil
+}
+
+func parseARN(arn string) (*ARN, error) {
 	if !strings.HasPrefix(arn, arnPrefix) {
-		return trace.BadParameter("arn: invalid prefix: %q", arn)
+		return nil, trace.BadParameter("arn: invalid prefix: %q", arn)
 	}
 
 	sections := strings.SplitN(arn, arnDelimiter, arnSections)
 	if len(sections) != arnSections {
-		return trace.BadParameter("arn: not enough sections: %q", arn)
+		return nil, trace.BadParameter("arn: not enough sections: %q", arn)
 	}
 
-	resourceParts := strings.SplitN(sections[sectionResource], "/", 2)
+	return &ARN{
+		Partition: sections[sectionPartition],
+		Service:   sections[sectionService],
+		Region:    sections[sectionRegion],
+		AccountID: sections[sectionAccount],
+		Resource:  sections[sectionResource],
+	}, nil
+}
 
-	if resourceParts[0] != "role" || sections[sectionService] != iamServiceName {
-		return trace.BadParameter("%q is not an AWS IAM role ARN", arn)
-	}
+// ARN is a parsed Amazon resource name.
+// Copied from https://github.com/aws/aws-sdk-go-v2/blob/main/aws/arn/arn.go
+type ARN struct {
+	// The partition that the resource is in. For standard AWS regions, the partition is "aws". If you have resources in
+	// other partitions, the partition is "aws-partitionname". For example, the partition for resources in the China
+	// (Beijing) region is "aws-cn".
+	Partition string
 
-	if len(resourceParts) < 2 || resourceParts[1] == "" {
-		return trace.BadParameter("%q is missing AWS IAM role name", arn)
-	}
+	// The service namespace that identifies the AWS product (for example, Amazon S3, IAM, or Amazon RDS). For a list of
+	// namespaces, see
+	// http://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html#genref-aws-service-namespaces.
+	Service string
 
-	if err := IsValidAccountID(sections[sectionAccount]); err != nil {
-		return trace.BadParameter("%q invalid account ID: %v", arn, err)
-	}
+	// The region the resource resides in. Note that the ARNs for some resources do not require a region, so this
+	// component might be omitted.
+	Region string
 
-	return nil
+	// The ID of the AWS account that owns the resource, without the hyphens. For example, 123456789012. Note that the
+	// ARNs for some resources don't require an account number, so this component might be omitted.
+	AccountID string
+
+	// The content of this part of the ARN varies by service. It often includes an indicator of the type of resource —
+	// for example, an IAM user or Amazon RDS database - followed by a slash (/) or a colon (:), followed by the
+	// resource name itself. Some services allows paths for resource names, as described in
+	// http://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html#arns-paths.
+	Resource string
 }
 
 var (

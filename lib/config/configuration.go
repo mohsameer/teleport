@@ -273,6 +273,8 @@ type CommandLineFlags struct {
 type IntegrationConfAccessGraphAWSSync struct {
 	// Role is the AWS Role associated with the Integration
 	Role string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfAzureOIDC contains the arguments of
@@ -304,6 +306,8 @@ type IntegrationConfDeployServiceIAM struct {
 	Role string
 	// TaskRole is the AWS Role to be used by the deployed service.
 	TaskRole string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfEICEIAM contains the arguments of
@@ -313,6 +317,8 @@ type IntegrationConfEICEIAM struct {
 	Region string
 	// Role is the AWS Role associated with the Integration
 	Role string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfAWSAppAccessIAM contains the arguments of
@@ -320,6 +326,8 @@ type IntegrationConfEICEIAM struct {
 type IntegrationConfAWSAppAccessIAM struct {
 	// RoleName is the AWS Role associated with the Integration
 	RoleName string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfEC2SSMIAM contains the arguments of
@@ -342,6 +350,8 @@ type IntegrationConfEC2SSMIAM struct {
 	// IntegrationName is the Teleport AWS OIDC Integration name.
 	// Used for resource tagging.
 	IntegrationName string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfEKSIAM contains the arguments of
@@ -351,6 +361,8 @@ type IntegrationConfEKSIAM struct {
 	Region string
 	// Role is the AWS Role associated with the Integration
 	Role string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // IntegrationConfAWSOIDCIdP contains the arguments of
@@ -374,6 +386,8 @@ type IntegrationConfListDatabasesIAM struct {
 	Region string
 	// Role is the AWS Role associated with the Integration
 	Role string
+	// AccountID is the AWS account ID.
+	AccountID string
 }
 
 // ReadConfigFile reads /etc/teleport.yaml (or whatever is passed via --config flag)

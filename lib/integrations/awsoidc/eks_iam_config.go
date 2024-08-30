@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/gravitational/trace"
 
 	awslib "github.com/gravitational/teleport/lib/cloud/aws"
@@ -46,6 +47,9 @@ type EKSIAMConfigureRequest struct {
 	// IntegrationRoleEKSPolicy is the Policy Name that is created to allow access to call AWS APIs.
 	// Defaults to "EKSAccess"
 	IntegrationRoleEKSPolicy string
+
+	// AccountID is the AWS Account ID.
+	AccountID string
 }
 
 // CheckAndSetDefaults ensures the required fields are present.
@@ -62,16 +66,22 @@ func (r *EKSIAMConfigureRequest) CheckAndSetDefaults() error {
 		r.IntegrationRoleEKSPolicy = defaultPolicyNameForEKS
 	}
 
+	if r.AccountID == "" {
+		return trace.BadParameter("account id is required")
+	}
+
 	return nil
 }
 
 // EKSIAMConfigureClient describes the required methods to create the IAM Policies required for enrolling EKS clusters into Teleport.
 type EKSIAMConfigureClient interface {
+	callerIdentityGetter
 	// PutRolePolicy creates or replaces a Policy by its name in a IAM Role.
 	PutRolePolicy(ctx context.Context, params *iam.PutRolePolicyInput, optFns ...func(*iam.Options)) (*iam.PutRolePolicyOutput, error)
 }
 
 type defaultEKSEIAMConfigureClient struct {
+	callerIdentityGetter
 	*iam.Client
 }
 
@@ -87,7 +97,8 @@ func NewEKSIAMConfigureClient(ctx context.Context, region string) (EKSIAMConfigu
 	}
 
 	return &defaultEKSEIAMConfigureClient{
-		Client: iam.NewFromConfig(cfg),
+		Client:               iam.NewFromConfig(cfg),
+		callerIdentityGetter: sts.NewFromConfig(cfg),
 	}, nil
 }
 
@@ -108,6 +119,10 @@ func NewEKSIAMConfigureClient(ctx context.Context, region string) (EKSIAMConfigu
 //   - iam:PutRolePolicy
 func ConfigureEKSIAM(ctx context.Context, clt EKSIAMConfigureClient, req EKSIAMConfigureRequest) error {
 	if err := req.CheckAndSetDefaults(); err != nil {
+		return trace.Wrap(err)
+	}
+
+	if err := checkAccountID(ctx, clt, req.AccountID); err != nil {
 		return trace.Wrap(err)
 	}
 
