@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	devicepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/devicetrust/v1"
 	loginrulepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/loginrule/v1"
 	machineidv1pb "github.com/gravitational/teleport/api/gen/proto/go/teleport/machineid/v1"
+	userprovisioningpb "github.com/gravitational/teleport/api/gen/proto/go/teleport/userprovisioning/v2"
 	"github.com/gravitational/teleport/api/gen/proto/go/teleport/vnet/v1"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/accesslist"
@@ -1732,4 +1734,61 @@ func (c *spiffeFederationCollection) writeText(w io.Writer, verbose bool) error 
 	t.SortRowsBy([]int{0}, true)
 	_, err := t.AsBuffer().WriteTo(w)
 	return trace.Wrap(err)
+}
+
+type staticHostUserCollection struct {
+	items []*userprovisioningpb.StaticHostUser
+}
+
+func (c *staticHostUserCollection) resources() []types.Resource {
+	r := make([]types.Resource, 0, len(c.items))
+	for _, resource := range c.items {
+		r = append(r, types.Resource153ToLegacy(resource))
+	}
+	return r
+}
+
+func (c *staticHostUserCollection) writeText(w io.Writer, verbose bool) error {
+	var rows [][]string
+	for _, item := range c.items {
+		groups := make(map[string]struct{})
+		uids := make(map[string]struct{})
+		gids := make(map[string]struct{})
+		labels := make(map[string]struct{})
+
+		for _, matcher := range item.Spec.Matchers {
+			for _, group := range matcher.Groups {
+				groups[group] = struct{}{}
+			}
+			uids[matcher.Uid] = struct{}{}
+			gids[matcher.Gid] = struct{}{}
+			for _, label := range matcher.NodeLabels {
+				labelString := fmt.Sprintf("%s=[%s]", label.Name, printSortedStringSlice(label.Values))
+				labels[labelString] = struct{}{}
+			}
+		}
+		rows = append(rows, []string{
+			item.GetMetadata().Name,
+			strings.Join(utils.StringsSliceFromSet(groups), ","),
+			strings.Join(utils.StringsSliceFromSet(uids), ","),
+			strings.Join(utils.StringsSliceFromSet(gids), ","),
+			strings.Join(utils.StringsSliceFromSet(labels), ","),
+		})
+	}
+	headers := []string{"Login", "Groups", "Uid", "Gid", "Node Labels"}
+	var t asciitable.Table
+	if verbose {
+		t = asciitable.MakeTable(headers, rows...)
+	} else {
+		t = asciitable.MakeTableWithTruncatedColumn(headers, rows, "Node Labels")
+	}
+	t.SortRowsBy([]int{0}, true)
+	_, err := t.AsBuffer().WriteTo(w)
+	return trace.Wrap(err)
+}
+
+func printSortedStringSlice(s []string) string {
+	s = slices.Clone(s)
+	slices.Sort(s)
+	return strings.Join(s, ",")
 }
