@@ -582,6 +582,9 @@ type upstreamHandle struct {
 
 	// databaseServers track database server details.
 	databaseServers map[dynamicResourceKey]*heartBeatInfo[*types.DatabaseServerV3]
+
+	// kubernetesServers track kubernetesServers server details.
+	kubernetesServers map[dynamicResourceKey]*heartBeatInfo[*types.KubernetesServerV3]
 }
 
 type dynamicResourceKey struct {
