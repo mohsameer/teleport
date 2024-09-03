@@ -25,20 +25,21 @@ import (
 	"github.com/gravitational/trace"
 	"github.com/sirupsen/logrus"
 
-	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	streamutils "github.com/gravitational/teleport/api/utils/grpc/stream"
+	peerv0 "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0"
 	"github.com/gravitational/teleport/lib/utils"
 )
 
 // proxyService implements the grpc ProxyService.
 type proxyService struct {
+	peerv0.UnimplementedProxyServiceServer
 	clusterDialer ClusterDialer
 	log           logrus.FieldLogger
 }
 
 // DialNode opens a bidirectional stream to the requested node.
-func (s *proxyService) DialNode(stream proto.ProxyService_DialNodeServer) error {
+func (s *proxyService) DialNode(stream peerv0.ProxyService_DialNodeServer) error {
 	frame, err := stream.Recv()
 	if err != nil {
 		return trace.Wrap(err)
@@ -79,15 +80,15 @@ func (s *proxyService) DialNode(stream proto.ProxyService_DialNodeServer) error 
 		From:     source,
 		To:       destination,
 		ServerID: dial.NodeID,
-		ConnType: dial.TunnelType,
+		ConnType: types.TunnelType(dial.TunnelType),
 	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	err = stream.Send(&proto.Frame{
-		Message: &proto.Frame_ConnectionEstablished{
-			ConnectionEstablished: &proto.ConnectionEstablished{},
+	err = stream.Send(&peerv0.Frame{
+		Message: &peerv0.Frame_ConnectionEstablished{
+			ConnectionEstablished: &peerv0.ConnectionEstablished{},
 		},
 	})
 	if err != nil {
