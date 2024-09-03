@@ -2230,8 +2230,8 @@ spec:
       groups:
         - foo
         - bar
-      uid: "1234"
-      gid: "5678"
+      uid: 1234
+      gid: 5678
     - node_labels_expression: 'labels["foo"] == labels["bar"]'
       groups:
         - baz
