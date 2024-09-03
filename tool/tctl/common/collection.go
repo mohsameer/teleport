@@ -1751,36 +1751,36 @@ func (c *staticHostUserCollection) resources() []types.Resource {
 func (c *staticHostUserCollection) writeText(w io.Writer, verbose bool) error {
 	var rows [][]string
 	for _, item := range c.items {
-		groups := make(map[string]struct{})
-		uids := make(map[string]struct{})
-		gids := make(map[string]struct{})
-		labels := make(map[string]struct{})
 
 		for _, matcher := range item.Spec.Matchers {
-			for _, group := range matcher.Groups {
-				groups[group] = struct{}{}
-			}
-			uids[matcher.Uid] = struct{}{}
-			gids[matcher.Gid] = struct{}{}
+			labelStrings := make([]string, 0, len(matcher.NodeLabels))
 			for _, label := range matcher.NodeLabels {
-				labelString := fmt.Sprintf("%s=[%s]", label.Name, printSortedStringSlice(label.Values))
-				labels[labelString] = struct{}{}
+				labelStrings = append(labelStrings, fmt.Sprintf("%s=[%s]", label.Name, printSortedStringSlice(label.Values)))
 			}
+			var uid string
+			if matcher.Uid != 0 {
+				uid = strconv.Itoa(int(matcher.Uid))
+			}
+			var gid string
+			if matcher.Gid != 0 {
+				gid = strconv.Itoa(int(matcher.Gid))
+			}
+			rows = append(rows, []string{
+				item.GetMetadata().Name,
+				printSortedStringSlice(labelStrings),
+				matcher.NodeLabelsExpression,
+				printSortedStringSlice(matcher.Groups),
+				uid,
+				gid,
+			})
 		}
-		rows = append(rows, []string{
-			item.GetMetadata().Name,
-			strings.Join(utils.StringsSliceFromSet(groups), ","),
-			strings.Join(utils.StringsSliceFromSet(uids), ","),
-			strings.Join(utils.StringsSliceFromSet(gids), ","),
-			strings.Join(utils.StringsSliceFromSet(labels), ","),
-		})
 	}
-	headers := []string{"Login", "Groups", "Uid", "Gid", "Node Labels"}
+	headers := []string{"Login", "Node Labels", "Node Expression", "Groups", "Uid", "Gid"}
 	var t asciitable.Table
 	if verbose {
 		t = asciitable.MakeTable(headers, rows...)
 	} else {
-		t = asciitable.MakeTableWithTruncatedColumn(headers, rows, "Node Labels")
+		t = asciitable.MakeTableWithTruncatedColumn(headers, rows, "Node Expression")
 	}
 	t.SortRowsBy([]int{0}, true)
 	_, err := t.AsBuffer().WriteTo(w)
