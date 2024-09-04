@@ -91,7 +91,6 @@ import (
 	"github.com/gravitational/teleport/lib/auth/accesspoint"
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/auth/keygen"
-	"github.com/gravitational/teleport/lib/auth/machineid/machineidv1"
 	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/auth/state"
 	"github.com/gravitational/teleport/lib/auth/storage"
@@ -2505,22 +2504,6 @@ func (process *TeleportProcess) initAuthService() error {
 		return trace.Wrap(err)
 	}
 	process.RegisterFunc("auth.heartbeat", heartbeat.Run)
-
-	spiffeFedSyncer, err := machineidv1.NewSPIFFEFederationSyncer(machineidv1.SPIFFEFederationSyncerConfig{
-		Backend:       b,
-		Store:         authServer.Services.SPIFFEFederations,
-		EventsWatcher: authServer.Services.Events,
-		Clock:         process.Clock,
-		Logger: logger.With(
-			teleport.ComponentKey, teleport.Component(teleport.ComponentAuth, "spiffe_federation_syncer"),
-		),
-	})
-	if err != nil {
-		return trace.Wrap(err, "initializing SPIFFEFederation Syncer")
-	}
-	process.RegisterFunc("auth.spiffe_federation_syncer", func() error {
-		return trace.Wrap(spiffeFedSyncer.Run(process.GracefulExitContext()), "running SPIFFEFederation Syncer")
-	})
 
 	process.RegisterFunc("auth.server_info", func() error {
 		return trace.Wrap(authServer.ReconcileServerInfos(process.GracefulExitContext()))
@@ -6436,8 +6419,7 @@ func readOrGenerateHostID(ctx context.Context, cfg *servicecfg.Config, kubeBacke
 				types.JoinMethodGitLab,
 				types.JoinMethodAzure,
 				types.JoinMethodGCP,
-				types.JoinMethodTPM,
-				types.JoinMethodTerraformCloud:
+				types.JoinMethodTPM:
 				// Checking error instead of the usual uuid.New() in case uuid generation
 				// fails due to not enough randomness. It's been known to happen happen when
 				// Teleport starts very early in the node initialization cycle and /dev/urandom
