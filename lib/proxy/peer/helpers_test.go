@@ -19,6 +19,7 @@
 package peer
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/gravitational/trace"
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
@@ -37,6 +39,7 @@ import (
 	"github.com/gravitational/teleport/api/types"
 	apiutils "github.com/gravitational/teleport/api/utils"
 	peerv0 "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0"
+	peerv0c "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0/peerv0connect"
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -57,23 +60,23 @@ type mockProxyAccessPoint struct {
 }
 
 type mockProxyService struct {
-	peerv0.UnimplementedProxyServiceServer
-	mockDialNode func(stream peerv0.ProxyService_DialNodeServer) error
+	peerv0c.UnimplementedProxyServiceHandler
+	mockDialNode func(context.Context, *connect.BidiStream[peerv0.Frame, peerv0.Frame]) error
 }
 
-func (s *mockProxyService) DialNode(stream peerv0.ProxyService_DialNodeServer) error {
+func (s *mockProxyService) DialNode(ctx context.Context, stream *connect.BidiStream[peerv0.Frame, peerv0.Frame]) error {
 	if s.mockDialNode != nil {
-		return s.mockDialNode(stream)
+		return s.mockDialNode(ctx, stream)
 	}
 
-	return s.defaultDialNode(stream)
+	return s.defaultDialNode(ctx, stream)
 }
 
-func (s *mockProxyService) defaultDialNode(stream peerv0.ProxyService_DialNodeServer) error {
+func (s *mockProxyService) defaultDialNode(ctx context.Context, stream *connect.BidiStream[peerv0.Frame, peerv0.Frame]) error {
 	sendErr := make(chan error)
 	recvErr := make(chan error)
 
-	frame, err := stream.Recv()
+	frame, err := stream.Receive()
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -93,7 +96,7 @@ func (s *mockProxyService) defaultDialNode(stream peerv0.ProxyService_DialNodeSe
 
 	go func() {
 		for {
-			if _, err := stream.Recv(); err != nil {
+			if _, err := stream.Receive(); err != nil {
 				recvErr <- err
 				close(recvErr)
 				return
@@ -117,8 +120,8 @@ func (s *mockProxyService) defaultDialNode(stream peerv0.ProxyService_DialNodeSe
 	}()
 
 	select {
-	case <-stream.Context().Done():
-		return stream.Context().Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case err := <-recvErr:
 		return err
 	case err := <-sendErr:

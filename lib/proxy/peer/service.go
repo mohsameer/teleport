@@ -19,9 +19,11 @@
 package peer
 
 import (
+	"context"
 	"net"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/gravitational/trace"
 	"github.com/sirupsen/logrus"
 
@@ -33,14 +35,13 @@ import (
 
 // proxyService implements the grpc ProxyService.
 type proxyService struct {
-	peerv0.UnimplementedProxyServiceServer
 	clusterDialer ClusterDialer
 	log           logrus.FieldLogger
 }
 
 // DialNode opens a bidirectional stream to the requested node.
-func (s *proxyService) DialNode(stream peerv0.ProxyService_DialNodeServer) error {
-	frame, err := stream.Recv()
+func (s *proxyService) DialNode(ctx context.Context, stream *connect.BidiStream[peerv0.Frame, peerv0.Frame]) error {
+	frame, err := stream.Receive()
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -102,7 +103,7 @@ func (s *proxyService) DialNode(stream peerv0.ProxyService_DialNodeServer) error
 
 	streamConn := utils.NewTrackingConn(streamutils.NewConn(streamRW, source, destination))
 
-	err = utils.ProxyConn(stream.Context(), streamConn, nodeConn)
+	err = utils.ProxyConn(ctx, streamConn, nodeConn)
 	sent, received := streamConn.Stat()
 	log.Debugf("Closing dial request from peer. sent: %d received %d", sent, received)
 	return trace.Wrap(err)

@@ -30,7 +30,6 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
@@ -41,6 +40,7 @@ import (
 	"github.com/gravitational/teleport/api/utils/grpc/interceptors"
 	streamutils "github.com/gravitational/teleport/api/utils/grpc/stream"
 	peerv0 "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0"
+	peerv0c "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0/peerv0connect"
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/services"
@@ -160,7 +160,8 @@ func (c *ClientConfig) checkAndSetDefaults() error {
 
 // clientConn hold info about a dialed grpc connection
 type clientConn struct {
-	*grpc.ClientConn
+	dialCtx context.Context
+	client  peerv0c.ProxyServiceClient
 
 	id   string
 	addr string
@@ -195,7 +196,7 @@ func (c *clientConn) maybeAcquire() (release func()) {
 // Shutdown closes the clientConn after all connections through it are closed,
 // or after the context is done.
 func (c *clientConn) Shutdown(ctx context.Context) {
-	defer c.Close()
+	defer c.httpClient.CloseIdleConnections()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -251,8 +252,6 @@ func NewClient(config ClientConfig) (*Client, error) {
 		reporter: reporter,
 	}
 
-	go c.monitor()
-
 	if c.config.sync != nil {
 		go c.config.sync()
 	} else {
@@ -260,36 +259,6 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}
 
 	return c, nil
-}
-
-// monitor monitors the status of peer proxy grpc connections.
-func (c *Client) monitor() {
-	ticker := c.config.Clock.NewTicker(defaults.ResyncInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-ticker.Chan():
-			c.RLock()
-			c.reporter.resetConnections()
-			for _, conn := range c.conns {
-				switch conn.GetState() {
-				case connectivity.Idle:
-					c.reporter.incConnection(c.config.ID, conn.id, connectivity.Idle.String())
-				case connectivity.Connecting:
-					c.reporter.incConnection(c.config.ID, conn.id, connectivity.Connecting.String())
-				case connectivity.Ready:
-					c.reporter.incConnection(c.config.ID, conn.id, connectivity.Ready.String())
-				case connectivity.TransientFailure:
-					c.reporter.incConnection(c.config.ID, conn.id, connectivity.TransientFailure.String())
-				case connectivity.Shutdown:
-					c.reporter.incConnection(c.config.ID, conn.id, connectivity.Shutdown.String())
-				}
-			}
-			c.RUnlock()
-		}
-	}
 }
 
 // sync runs the peer proxy watcher functionality.
@@ -429,7 +398,7 @@ func (c *Client) DialNode(
 // [peerv0.ProxyService_DialNodeServer] interfaces.
 type stream interface {
 	Send(*peerv0.Frame) error
-	Recv() (*peerv0.Frame, error)
+	Receive() (*peerv0.Frame, error)
 }
 
 // frameStream implements [streamutils.Source].
@@ -443,7 +412,7 @@ func (s frameStream) Send(p []byte) error {
 }
 
 func (s frameStream) Recv() ([]byte, error) {
-	frame, err := s.stream.Recv()
+	frame, err := s.stream.Receive()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -523,7 +492,7 @@ func (c *Client) dial(proxyIDs []string, dialRequest *peerv0.DialRequest) (frame
 		ctx, cancel := context.WithCancel(context.Background())
 		context.AfterFunc(ctx, release)
 
-		stream, err := peerv0.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
+		stream := peerv0c.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
 		if err != nil {
 			cancel()
 			c.metrics.reportTunnelError(errorProxyPeerTunnelRPC)

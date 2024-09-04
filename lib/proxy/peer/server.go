@@ -19,22 +19,30 @@
 package peer
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"math"
 	"net"
+	"net/http"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/gravitational/trace"
+	"github.com/gravitational/trace/trail"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/gravitational/teleport"
+	"github.com/gravitational/teleport/api"
 	"github.com/gravitational/teleport/api/metadata"
 	"github.com/gravitational/teleport/api/utils/grpc/interceptors"
-	peerv0 "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0"
+	peerv0c "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0/peerv0connect"
 	"github.com/gravitational/teleport/lib/utils"
 )
 
@@ -51,9 +59,9 @@ type ServerConfig struct {
 	Log           logrus.FieldLogger
 	ClusterName   string
 
-	// service is a custom ProxyServiceServer
-	// configurable for testing purposes.
-	service peerv0.ProxyServiceServer
+	// service is a custom ProxyServiceHandler configurable for testing
+	// purposes.
+	service peerv0c.ProxyServiceHandler
 }
 
 // checkAndSetDefaults checks and sets default values
@@ -136,7 +144,15 @@ func NewServer(config ServerConfig) (*Server, error) {
 		grpc.MaxConcurrentStreams(math.MaxUint32),
 	)
 
-	peerv0.RegisterProxyServiceServer(server, config.service)
+	handlerOptions := connect.WithHandlerOptions(
+		connect.WithCompression("gzip", nil, nil),
+		connect.WithInterceptors(addVersionInterceptor{}, traceErrorsInterceptor{}),
+	)
+
+	mux := http.NewServeMux()
+	mux.Handle(
+		peerv0c.NewProxyServiceHandler(config.service, handlerOptions),
+	)
 
 	return &Server{
 		config: config,
@@ -166,4 +182,117 @@ func (s *Server) Close() error {
 func (s *Server) Shutdown() error {
 	s.server.GracefulStop()
 	return nil
+}
+
+type addVersionInterceptor struct{}
+
+var _ connect.Interceptor = addVersionInterceptor{}
+
+// WrapStreamingClient implements [connect.Interceptor].
+func (addVersionInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, s connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, s)
+		conn.RequestHeader().Set(metadata.VersionKey, api.Version)
+		return conn
+	}
+}
+
+// WrapStreamingHandler implements [connect.Interceptor].
+func (addVersionInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		conn.ResponseHeader().Set(metadata.VersionKey, api.Version)
+		return next(ctx, conn)
+	}
+}
+
+// WrapUnary implements [connect.Interceptor].
+func (addVersionInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set(metadata.VersionKey, api.Version)
+		return next(ctx, req)
+	}
+}
+
+type traceErrorsInterceptor struct{}
+
+var _ connect.Interceptor = traceErrorsInterceptor{}
+
+type traceErrorsStreamingClientConn struct {
+	connect.StreamingClientConn
+}
+
+func (c *traceErrorsStreamingClientConn) Send(msg any) error {
+	return fromConnectRPC(c.StreamingClientConn.Send(msg))
+}
+
+func (c *traceErrorsStreamingClientConn) CloseRequest() error {
+	return fromConnectRPC(c.StreamingClientConn.CloseRequest())
+}
+
+func (c *traceErrorsStreamingClientConn) Receive(msg any) error {
+	return fromConnectRPC(c.StreamingClientConn.Receive(msg))
+}
+
+func (c *traceErrorsStreamingClientConn) CloseResponse() error {
+	return fromConnectRPC(c.StreamingClientConn.CloseResponse())
+}
+
+// WrapStreamingClient implements connect.Interceptor.
+func (traceErrorsInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, s connect.Spec) connect.StreamingClientConn {
+		return &traceErrorsStreamingClientConn{
+			StreamingClientConn: next(ctx, s),
+		}
+	}
+}
+
+type traceErrorsStreamingHandlerConn struct {
+	connect.StreamingHandlerConn
+}
+
+func (c *traceErrorsStreamingHandlerConn) Send(msg any) error {
+	return fromConnectRPC(c.StreamingHandlerConn.Send(msg))
+}
+
+func (c *traceErrorsStreamingHandlerConn) Receive(msg any) error {
+	return fromConnectRPC(c.StreamingHandlerConn.Receive(msg))
+}
+
+// WrapStreamingHandler implements connect.Interceptor.
+func (traceErrorsInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		return toConnectRPC(next(ctx, &traceErrorsStreamingHandlerConn{
+			StreamingHandlerConn: conn,
+		}))
+	}
+}
+
+// WrapUnary implements connect.Interceptor.
+func (traceErrorsInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		resp, err := next(ctx, req)
+		err = fromConnectRPC(err)
+		return resp, err
+	}
+}
+
+func toConnectRPC(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return err
+	}
+	err = trail.ToGRPC(err)
+	return connect.NewError(connect.Code(status.Code(err)), err)
+}
+
+func fromConnectRPC(err error) error {
+	if err == nil {
+		return nil
+	}
+	if cErr := (*connect.Error)(nil); errors.As(err, &cErr) {
+		return trail.FromGRPC(status.Error(codes.Code(cErr.Code()), cErr.Message()))
+	}
+	return err
 }

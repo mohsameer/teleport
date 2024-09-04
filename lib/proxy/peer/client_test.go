@@ -29,6 +29,7 @@ import (
 
 	"github.com/gravitational/teleport/api/types"
 	peerv0 "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0"
+	peerv0c "github.com/gravitational/teleport/gen/proto/go/teleport/lib/proxy/peer/v0/peerv0connect"
 )
 
 // TestClientConn checks the client's connection caching capabilities
@@ -145,7 +146,7 @@ func TestCAChange(t *testing.T) {
 	require.NotNil(t, conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := peerv0.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
+	stream := peerv0c.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, stream)
 
@@ -159,7 +160,7 @@ func TestCAChange(t *testing.T) {
 	conn, err = client.connect("s1", server.config.Listener.Addr().String())
 	require.NoError(t, err)
 	require.NotNil(t, conn)
-	stream, err = peerv0.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
+	stream, err = peerv0c.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
 	require.Error(t, err)
 	require.Nil(t, stream)
 
@@ -170,7 +171,7 @@ func TestCAChange(t *testing.T) {
 	conn, err = client.connect("s1", server.config.Listener.Addr().String())
 	require.NoError(t, err)
 	require.NotNil(t, conn)
-	stream, err = peerv0.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
+	stream, err = peerv0c.NewProxyServiceClient(conn.ClientConn).DialNode(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, stream)
 }
@@ -183,7 +184,7 @@ func TestBackupClient(t *testing.T) {
 	// Force the first client connection to fail.
 	_, def1 := setupServer(t, "s1", ca, ca, types.RoleProxy, func(c *ServerConfig) {
 		c.service = &mockProxyService{
-			mockDialNode: func(stream peerv0.ProxyService_DialNodeServer) error {
+			mockDialNode: func(stream peerv0c.ProxyServiceHandler) error {
 				dialCalled = true
 				return trace.NotFound("tunnel not found")
 			},
